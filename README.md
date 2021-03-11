@@ -5,15 +5,26 @@ This repository is to:
 - test its usability
 - package it into a useful form (like a docker image)
 
-## Test with vagrant
+## with Docker
+
+### Build
+`$ make build`
+
+### Test and play around
+`$ make dev`
+
+## with Vagrant
+
+### Test
 
 ```
-vagrant up
-vagrant ssh
-zsh
+$ vagrant up
+$ vagrant ssh
+$ zsh
 
 # and enjoy all the packages and configuration that's prepared by `dotfiles`
 # such as tmux, nvim with spacevim, lf
 ```
 
-clean up with `vagrant destroy`
+### Clean up
+`$ vagrant destroy`
