@@ -7,15 +7,14 @@ FROM nixos/nix
 RUN mkdir -p /output/store
 
 COPY dotfiles/nix/bin/channels.sh /nix-bootstrap/bin/channels.sh
-COPY dotfiles/nix/darwin /nix-bootstrap/darwin
-COPY dotfiles/nix/pkgs.nix /nix-bootstrap/pkgs.nix
+COPY dotfiles/nix/pkgs /nix-bootstrap/pkgs
 
 RUN nix-shell -p bash --command '/nix-bootstrap/bin/channels.sh'; nix-env -iA nixpkgs.nix
 
 # to allow nix binary in a /output/profile too
 RUN nix-env --profile /output/profile -iA nixpkgs.nix
 
-RUN nix-env --profile /output/profile -f /nix-bootstrap/pkgs.nix -i
+RUN nix-env --profile /output/profile -f /nix-bootstrap/pkgs/default.nix -i
 
 RUN cp -va $(nix-store -qR /output/profile) /output/store
 
