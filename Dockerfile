@@ -38,6 +38,9 @@ COPY --from=0 --chown=dotted:dotted /output/profile/ /usr/local/
 
 COPY --chown=dotted:dotted dotfiles /home/dotted/dotfiles
 
-RUN ~/dotfiles/bootstrap/configuration.sh && rm -rf ~/.cache
+# https://unix.stackexchange.com/questions/153862/remove-all-files-directories-except-for-one-file
+# https://www.tecmint.com/delete-all-files-in-directory-except-one-few-file-extensions/
+RUN ~/dotfiles/bootstrap/configuration.sh && \
+      bash -O extglob -c 'cd ~/.cache && rm -rf !("SpaceVim"|"vimfiles")'
 
 ENTRYPOINT ["/usr/local/bin/zsh"]
