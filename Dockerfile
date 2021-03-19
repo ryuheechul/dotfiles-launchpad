@@ -30,11 +30,12 @@ RUN mkdir -p /nix && chown dotted:dotted /nix
 USER dotted
 WORKDIR /home/dotted
 
-ENV ASDF_DIR=/asdf-home/.asdf
-ENV ASDF_DATA_DIR=/home/dotted/.asdf
-
 COPY --from=0 --chown=dotted:dotted /output/store    /nix/store
 COPY --from=0 --chown=dotted:dotted /output/profile/ /usr/local/
+
+ENV SHELL=/usr/local/bin/zsh
+ENV ASDF_DIR=/asdf-home/.asdf
+ENV ASDF_DATA_DIR=/home/dotted/.asdf
 
 COPY --chown=dotted:dotted dotfiles /home/dotted/dotfiles
 

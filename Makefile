@@ -1,6 +1,10 @@
 .PHONY: dev
-dev: build
+dev:
 	docker-compose run dev
+
+.PHONY: tmux
+tmux:
+	docker-compose run dev-tmux
 
 .PHONY: build
 build:

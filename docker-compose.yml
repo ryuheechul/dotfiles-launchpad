@@ -2,3 +2,10 @@ version: '3'
 services:
   dev:
     build: .
+  dev-tmux:
+    build: .
+    environment:
+      - HOST_ALWAYS_USE_TMUX=1
+    command:
+      - -c
+      - tmux
