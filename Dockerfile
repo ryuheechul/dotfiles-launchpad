@@ -28,6 +28,7 @@ RUN mkdir -p /asdf-home && chown dotted /asdf-home
 RUN mkdir -p /nix && chown dotted:dotted /nix
 
 USER dotted
+ENV USER=dotted
 WORKDIR /home/dotted
 
 COPY --from=0 --chown=dotted:dotted /output/store    /nix/store
@@ -43,5 +44,9 @@ COPY --chown=dotted:dotted dotfiles /home/dotted/dotfiles
 # https://www.tecmint.com/delete-all-files-in-directory-except-one-few-file-extensions/
 RUN ~/dotfiles/bootstrap/configuration.sh && \
       bash -O extglob -c 'cd ~/.cache && rm -rf !("SpaceVim"|"vimfiles")'
+
+# to load NIX_PATH with zsh
+COPY bin/inject-source-nix-path.sh /temp/inject-source-nix-path.sh
+RUN /temp/inject-source-nix-path.sh
 
 ENTRYPOINT ["/usr/local/bin/zsh"]
