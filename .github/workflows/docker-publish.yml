@@ -9,10 +9,6 @@ on:
   # Run tests for any PRs.
   pull_request:
 
-env:
-  # TODO: Change variable to your image's name.
-  IMAGE_NAME: ghcr.io/ryuheechul/dotfiles
-
 jobs:
   # Run tests.
   # See also https://docs.docker.com/docker-hub/builds/automated-testing/
@@ -25,20 +21,51 @@ jobs:
       - name: Checkout submodules
         uses: textbook/git-checkout-submodule-action@master
 
-      - name: Run tests
-        run: |
-          if [ -f docker-compose.test.yml ]; then
-            docker-compose --file docker-compose.test.yml build
-            docker-compose --file docker-compose.test.yml run sut
-          else
-            docker build . --file Dockerfile
-          fi
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: test Dockerfile
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: false
+          load: true
+          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:latest
+          cache-to: type=inline
+          tags: |
+            ghcr.io/ryuheechul/dotfiles:latest
+  test-gitpod:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Checkout submodules
+        uses: textbook/git-checkout-submodule-action@master
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: test gitpod.Dockerfile
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: gitpod.Dockerfile
+          push: false
+          load: true
+          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:gitpod
+          cache-to: type=inline
+          tags: |
+            ghcr.io/ryuheechul/dotfiles:gitpod
 
   # Push image to GitHub Packages.
   # See also https://docs.docker.com/docker-hub/builds/
   push:
     # Ensure test job passes before pushing image.
-    needs: test
+    needs:
+      - test
+      - test-gitpod
 
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
@@ -57,17 +84,31 @@ jobs:
         uses: docker/setup-buildx-action@v1
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v1 
+        uses: docker/login-action@v1
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
-      -
-        name: Build and push
+
+      - name: Build and push Dockerfile
         uses: docker/build-push-action@v2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:latest
+          cache-to: type=inline
           tags: |
             ghcr.io/ryuheechul/dotfiles:latest
+
+      - name: Build and push gitpod.Dockerfile
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: gitpod.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:gitpod
+          cache-to: type=inline
+          tags: |
+            ghcr.io/ryuheechul/dotfiles:gitpod
