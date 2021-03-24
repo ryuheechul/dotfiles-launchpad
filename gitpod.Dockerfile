@@ -1,4 +1,4 @@
-FROM ghcr.io/ryuheechul/dotfiles as df
+FROM ghcr.io/ryuheechul/dotfiles:latest as df
 
 FROM gitpod/workspace-full
 
