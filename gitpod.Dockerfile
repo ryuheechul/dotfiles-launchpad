@@ -23,5 +23,7 @@ ENV ASDF_DIR=/asdf-home/.asdf
 ENV ASDF_DATA_DIR=/home/gitpod/.asdf
 
 ## tmux
-# for tmux
-ENV SHELL=/usr/local/bin/zsh
+# for tmux and bash
+ENV SHELL=/home/gitpod/.nix-profile/bin/zsh
+ENV PATH=/home/gitpod/.nix-profile/bin:${PATH}
+RUN echo 'alias tmux="SHELL=/home/gitpod/.nix-profile/bin/zsh tmux"' >> /home/gitpod/.bashrc
