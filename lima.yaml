@@ -1,0 +1,62 @@
+# Lima VM that bootstraps dotfiles, the modern replacement for the old
+# Vagrantfile. Same idea: a throwaway Ubuntu box provisioned by the repo's
+# own linux + configuration bootstrap scripts.
+#
+#   limactl start --name dotfiles lima.yaml   # create + provision
+#   limactl shell dotfiles zsh                # hop in: tmux, nvim, lf, ...
+#   limactl delete -f dotfiles                # clean up
+#
+# Requires Lima >= 1.0. Unlike the old Vagrant setup this clones dotfiles
+# fresh inside the guest (mirrors how a real user bootstraps, and avoids
+# running a nix build over a flaky host mount).
+
+# enough headroom for the nix build (the old Vagrant box needed swapspace to
+# avoid OOM; giving real memory here is simpler than swap)
+cpus: 4
+memory: "4GiB"
+disk: "20GiB"
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+provision:
+  # runs as the default Lima user, which has passwordless sudo (linux.sh needs
+  # it for the multi-user nix install)
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+      # keep this throwaway VM lean: doom's installer is interactive and nvim's
+      # plugin sync is slow; neither is essential for launchpad's purpose
+      export SKIP_INSTALL_DOOM=1
+      export SKIP_INSTALL_VIM_PLUGINS=1
+      # dconf (GNOME desktop settings) activation needs a dbus session this
+      # headless VM doesn't have
+      export HINT_FOR_HM_NO_DCONF=1
+      sudo apt-get update && sudo apt-get install -y git
+      if [ ! -d "${HOME}/dotfiles" ]; then
+        git clone https://github.com/ryuheechul/dotfiles "${HOME}/dotfiles"
+      fi
+      cd "${HOME}/dotfiles"
+      # the cloud image ships default ~/.bashrc/~/.profile; home-manager manages
+      # them and won't clobber pre-existing copies, so drop them before hm runs
+      rm -f "${HOME}/.bashrc" "${HOME}/.profile" "${HOME}/.bash_logout"
+      # empty ~/.local.zshrc so configuration.sh skips seeding it from the
+      # template (which carries device-only toggles like MY_NIX_EXTRA_DEVENV)
+      touch "${HOME}/.local.zshrc"
+      bootstrap/foundation/linux.sh
+      . /etc/profile.d/nix.sh
+      . /etc/profile.d/user-shim-for-nix-path.sh
+      bootstrap/configuration.sh
+
+# readiness signal after provisioning
+probes:
+  - script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      test -e /nix/var/nix/profiles/default/bin/nix || exit 1
+    hint: |
+      nix did not install; check `limactl shell dotfiles -- sudo cat /var/log/cloud-init-output.log`

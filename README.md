@@ -1,11 +1,15 @@
 # dotfiles launchpad
 
 This repository is to:
-- demonstrate examples of bootstrapping of [dotfiles](https://github.com/ryuheechul/dotfiles)
+- demonstrate examples of bootstrapping [dotfiles](https://github.com/ryuheechul/dotfiles)
 - test its usability
 - package it into a useful form (like a docker image)
 
 ## with Docker
+
+Builds an image that bootstraps dotfiles via single-user nix + home-manager
+(the same path [dotfiles](https://github.com/ryuheechul/dotfiles)'s `setup.sh`
+uses for GitHub Codespaces).
 
 ### Build
 `$ make build`
@@ -13,18 +17,24 @@ This repository is to:
 ### Test and play around
 `$ make dev`
 
-## with Vagrant
+> Uses `docker compose` (Compose v2). A podman setup exposing the `docker` CLI
+> works too.
+
+## with Lima
+
+A throwaway Ubuntu VM provisioned by dotfiles' own `linux.sh` +
+`configuration.sh`, the modern replacement for the old Vagrant box. Needs
+[Lima](https://lima-vm.io) >= 1.0.
 
 ### Test
 
-```
-$ vagrant up
-$ vagrant ssh
-$ zsh
+```sh
+$ limactl start --name dotfiles lima.yaml
+$ limactl shell dotfiles zsh
 
-# and enjoy all the packages and configuration that's prepared by `dotfiles`
-# such as tmux, nvim with spacevim, lf
+# and enjoy all the packages and configuration that dotfiles prepares,
+# such as tmux, nvim, lf
 ```
 
 ### Clean up
-`$ vagrant destroy`
+`$ limactl delete -f dotfiles`

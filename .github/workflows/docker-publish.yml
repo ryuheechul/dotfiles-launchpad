@@ -5,137 +5,142 @@ on:
     # Publish `main` as Docker `latest` image.
     branches:
       - main
-
-  # Run tests for any PRs.
   pull_request:
 
+env:
+  IMAGE: ghcr.io/ryuheechul/dotfiles
+
 jobs:
-  # Run tests.
-  # See also https://docs.docker.com/docker-hub/builds/automated-testing/
+  # PR breakage check: build amd64 only, no push (fast feedback).
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: free disk space
-        run: |
-          df -h
-          sudo swapoff -a
-          sudo rm -f /swapfile
-          sudo apt clean
-          yes | docker system prune
-          df -h
-
-      - name: Checkout submodules
-        uses: textbook/git-checkout-submodule-action@master
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-
-      - name: test Dockerfile
-        uses: docker/build-push-action@v2
-        with:
-          context: .
-          push: false
-          load: true
-          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:latest
-          cache-to: type=inline
-          tags: |
-            ghcr.io/ryuheechul/dotfiles:latest
-  test-gitpod:
-    needs: test
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: free disk space
-        run: |
-          df -h
-          sudo swapoff -a
-          sudo rm -f /swapfile
-          sudo apt clean
-          yes | docker system prune
-          df -h
-
-      - name: Checkout submodules
-        uses: textbook/git-checkout-submodule-action@master
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-
-      - name: test gitpod.Dockerfile
-        uses: docker/build-push-action@v2
-        with:
-          context: .
-          file: gitpod.Dockerfile
-          push: false
-          load: true
-          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:gitpod
-          cache-to: type=inline
-          tags: |
-            ghcr.io/ryuheechul/dotfiles:gitpod
-
-  # Push image to GitHub Packages.
-  # See also https://docs.docker.com/docker-hub/builds/
-  push:
-    # Ensure test job passes before pushing image.
-    needs:
-      - test
-      - test-gitpod
-
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
-      - name: free disk space
+      - name: Free disk space
         run: |
           df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL
           sudo swapoff -a
           sudo rm -f /swapfile
-          sudo apt clean
-          yes | docker system prune
+          sudo apt-get clean
+          docker system prune -af
           df -h
 
-      - name: Checkout submodules
-        uses: textbook/git-checkout-submodule-action@master
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
+      - name: Build (amd64, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+
+  # Native multi-arch build on push: each arch on its own runner (no QEMU),
+  # pushed to GHCR by digest, then combined into one manifest by `merge`.
+  build:
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          # native arm runner - free for public repos, avoids slow QEMU builds
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Prepare platform pair
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo apt-get clean
+          docker system prune -af
+          df -h
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v1
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.CR_PAT }}
 
-      - name: Build and push Dockerfile
-        uses: docker/build-push-action@v2
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:latest
-          cache-to: type=inline
-          tags: |
-            ghcr.io/ryuheechul/dotfiles:latest
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ env.PLATFORM_PAIR }}
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ env.PLATFORM_PAIR }},mode=max
 
-      - name: Build and push gitpod.Dockerfile
-        uses: docker/build-push-action@v2
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
         with:
-          context: .
-          file: gitpod.Dockerfile
-          platforms: linux/amd64
-          push: true
-          cache-from: type=registry,ref=ghcr.io/ryuheechul/dotfiles:gitpod
-          cache-to: type=inline
-          tags: |
-            ghcr.io/ryuheechul/dotfiles:gitpod
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Combine the per-arch digests into a single multi-arch manifest tagged
+  # `latest`, so `docker pull` picks amd64 or arm64 automatically.
+  merge:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create -t ${{ env.IMAGE }}:latest \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect
+        run: docker buildx imagetools inspect ${{ env.IMAGE }}:latest
