@@ -9,3 +9,8 @@ tmux:
 .PHONY: build
 build:
 	docker compose build
+
+.PHONY: update
+update:
+	git submodule update --remote dotfiles
+
