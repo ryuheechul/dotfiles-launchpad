@@ -1,10 +1,10 @@
 name: Docker
 
 on:
-  push:
-    # Publish `main` as Docker `latest` image.
-    branches:
-      - main
+  # Dispatch-only: multi-GB builds are only worth running on demand (same
+  # policy as dotfiles-cm-publish.yml). PRs still get a no-push breakage
+  # check below.
+  workflow_dispatch:
   pull_request:
 
 env:
@@ -42,10 +42,11 @@ jobs:
           platforms: linux/amd64
           push: false
 
-  # Native multi-arch build on push: each arch on its own runner (no QEMU),
-  # pushed to GHCR by digest, then combined into one manifest by `merge`.
+  # Native multi-arch build on dispatch: each arch on its own runner (no
+  # QEMU), pushed to GHCR by digest, then combined into one manifest by
+  # `merge`.
   build:
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -120,7 +121,7 @@ jobs:
   # Combine the per-arch digests into a single multi-arch manifest tagged
   # `latest`, so `docker pull` picks amd64 or arm64 automatically.
   merge:
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     permissions:
