@@ -2,11 +2,12 @@
 # in this directory (ubuntu flavor of ../). Thin wrappers over `container build`
 # and bin/launch.sh; the scripts also work directly from any directory.
 #
-#   make build    # container build into the machine runtime's image store
-#   make launch   # create the machine (or reuse) + wait for first boot
-#   make run      # shell in
-#   make stop     # stop the machine
-#   make delete   # delete the machine and its state
+#   make build             # container build into the machine runtime's image store
+#   make launch            # create the machine (or reuse) + wait for first boot
+#   make launch-published  # pull the CI-published image, then launch
+#   make run               # shell in
+#   make stop              # stop the machine
+#   make delete            # delete the machine and its state
 #
 # Local image flow: `make build` then
 # `CONTAINER_IMAGE=local/dotfiles-cm:latest make launch` (plain `make launch`
@@ -14,6 +15,7 @@
 
 MACHINE ?= dotfiles-cm
 IMAGE ?= local/dotfiles-cm:latest
+PUBLISHED_IMAGE ?= ghcr.io/ryuheechul/dotfiles-launchpad/dotfiles-cm:latest
 HERE := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 # build context stays the repo root: the Dockerfile COPYies the dotfiles
 # submodule and its own bin/ + unit files from there
@@ -32,6 +34,12 @@ build: ## Build the image (context is the repo root)
 .PHONY: launch
 launch: ## Create the machine (or reuse) + wait for first boot
 	CONTAINER_MACHINE_NAME=$(MACHINE) $(HERE)bin/launch.sh
+
+# explicit pull so a stale local tag can never shadow the registry
+.PHONY: launch-published
+launch-published: ## Pull the CI-published image + create/reuse the machine
+	container image pull $(PUBLISHED_IMAGE)
+	CONTAINER_MACHINE_NAME=$(MACHINE) CONTAINER_IMAGE=$(PUBLISHED_IMAGE) $(HERE)bin/launch.sh
 
 .PHONY: run
 run: ## Shell in

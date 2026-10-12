@@ -25,9 +25,9 @@ runtime creates from your host user.
 container machine run -n dotfiles-cm
 ```
 
-Make targets (from this directory): `make launch`, `make run`, `make stop`,
-`make delete`, and `make build` for a local image - see the
-[Makefile](./Makefile).
+Make targets (from this directory): `make launch`, `make launch-published`
+(pulls the CI image first), `make run`, `make stop`, `make delete`, and
+`make build` for a local image - see the [Makefile](./Makefile).
 
 ## Build locally
 
