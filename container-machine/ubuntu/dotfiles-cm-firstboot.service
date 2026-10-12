@@ -1,0 +1,15 @@
+[Unit]
+Description=dotfiles-cm first boot: graft baked template home onto the runtime account
+Documentation=file:///usr/local/sbin/dotfiles-cm-firstboot
+After=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dotfiles-cm-firstboot
+# template copy + chown + home-manager switch can run for minutes
+TimeoutStartSec=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

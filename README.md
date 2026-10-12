@@ -20,6 +20,18 @@ uses for GitHub Codespaces).
 > Uses `docker compose` (Compose v2). A podman setup exposing the `docker` CLI
 > works too.
 
+## with Apple container machine
+
+`dotfiles-cm` - a user-agnostic machine image: Ubuntu + systemd with the
+dotfiles pre-baked, grafted onto your host account on first boot. See
+[`container-machine/`](./container-machine/) for flavors, the user model,
+and build/publish details.
+
+```sh
+$ ./container-machine/ubuntu/bin/launch.sh  # create (or reuse) + wait for first boot
+$ container machine run -n dotfiles-cm
+```
+
 ## with Lima
 
 A throwaway Ubuntu VM provisioned by dotfiles' own `linux.sh` +
