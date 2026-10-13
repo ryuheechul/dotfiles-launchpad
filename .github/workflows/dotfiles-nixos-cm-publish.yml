@@ -1,0 +1,63 @@
+# Build the dotfiles-nixos-cm container machine image (NixOS base +
+# systemd + a baked template home grafted by the first-boot service) and
+# publish it to ghcr.io/ryuheechul/dotfiles-launchpad/dotfiles-nixos-cm so
+# a machine can start provisioned. Dispatch-only: builds are multi-GB,
+# only worth running on demand (same policy as provision's image workflows).
+name: dotfiles-nixos-cm
+
+on:
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/ryuheechul/dotfiles-launchpad/dotfiles-nixos-cm
+
+jobs:
+  build:
+    # aarch64 only: Apple container machines run on Apple Silicon
+    runs-on: ubuntu-24.04-arm
+    # GITHUB_TOKEN needs write access to push to GHCR (no PAT)
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo apt-get clean
+          docker system prune -af
+          df -h
+
+      - name: Record short sha for the sha-<short> tag
+        run: echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: container-machine/nixos/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:sha-${{ env.SHORT_SHA }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max

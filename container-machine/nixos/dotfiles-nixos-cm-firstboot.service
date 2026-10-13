@@ -1,0 +1,19 @@
+[Unit]
+Description=dotfiles-nixos-cm first boot: graft baked template home onto the runtime account
+Documentation=file:///usr/local/sbin/dotfiles-nixos-cm-firstboot
+After=basic.target
+
+[Service]
+Type=oneshot
+# systemd's default service PATH stops at /usr/bin, but the graft shells
+# out to coreutils/awk/getent that only exist in the system profile
+Environment=PATH=/run/current-system/sw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/sbin/dotfiles-nixos-cm-firstboot
+# the graft includes nixos-rebuild + home-manager: minutes on first
+# boot; TimeoutStartSec=0 so systemd never kills it mid-way
+TimeoutStartSec=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
