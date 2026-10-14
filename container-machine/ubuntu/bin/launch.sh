@@ -18,7 +18,7 @@ command -v container >/dev/null || { echo "Apple 'container' CLI not found" >&2;
 # reuse the machine if it already exists; otherwise create it. user
 # provisioning happens automatically on boot (runtime-edited /etc/passwd);
 # a first-boot unit then grafts the template home (see
-# bin/dotfiles-cm-firstboot.sh) - creation returns before that finishes.
+# boot/firstboot.sh) - creation returns before that finishes.
 created=0
 if container machine list 2>/dev/null | grep -q "^$name[[:space:]]"; then
   echo "machine '$name' already exists; leaving it as-is"

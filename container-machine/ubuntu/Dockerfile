@@ -3,9 +3,10 @@
 # service grafts onto whatever account the machine runtime creates. No host
 # username/uid is baked into a live account, so any host can boot it.
 #
-# Build context is the repo root (this flavor's bin/ + unit files get
-# COPYied from there; the dotfiles repo is cloned at build time from the
-# submodule pin, not COPYied), so the Makefile lives here and passes all
+# Build context is the repo root (this flavor's boot/ + bin/ and the
+# shared container-machine/template/home/ get COPYied from there; the
+# dotfiles repo is cloned at build time from the submodule pin, not
+# COPYied), so the Makefile lives here and passes all
 # paths + build args explicitly:
 #   make build   (container build, same tooling as the machine runtime)
 #
@@ -21,6 +22,15 @@
 #     'dotted' account (uid 4242) outside /home so it can never collide with
 #     the runtime username's /home/<name> (the runtime refuses to provision
 #     a user whose home path already exists in the image)
+#   /var/lib/dotfiles-cm/baked-home/dotfiles.baked - the image's pinned clone
+#     of the dotfiles repo (on a pinned-<sha> branch)
+#   /var/lib/dotfiles-cm/baked-home/dotfiles -> dotfiles.baked - the default
+#     ~/dotfiles; a relative symlink so the graft's rewrite leaves it alone.
+#     ~/dotfiles.host is created at first boot (points at the host's repo).
+#   boot/ - this flavor's graft files, by destination: firstboot.sh +
+#     firstboot.service go to /usr/local/sbin and /etc/systemd/system.
+#     The baked-home files are shared by all flavors and live in
+#     container-machine/template/home/ (Makefile, README.md).
 #   /usr/local/sbin/dotfiles-cm-firstboot + dotfiles-cm-firstboot.service -
 #     waits for the runtime's user setup (it writes sudoers last), swaps the
 #     fresh skel home for the template, rewrites the baked path, re-runs
@@ -89,7 +99,7 @@ RUN sed -i 's|^#\?DSHELL=.*|DSHELL=/bin/zsh|' /etc/adduser.conf \
 
 # ---- template home, built as a throwaway account ----
 # BAKED_USER/BAKED_HOME must stay in sync with the constants at the top of
-# dotfiles-cm-firstboot.sh (copied below).
+# boot/firstboot.sh; the grep assert below fails the build if they drift.
 ARG BAKED_USER=dotted
 ARG BAKED_UID=4242
 ENV BAKED_HOME=/var/lib/dotfiles-cm/baked-home
@@ -98,24 +108,34 @@ RUN useradd -m -u ${BAKED_UID} -d ${BAKED_HOME} -s /bin/zsh ${BAKED_USER} \
     && echo "${BAKED_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${BAKED_USER} \
     && chmod 0440 /etc/sudoers.d/${BAKED_USER}
 
-# The guest's ~/dotfiles must be a real git repo (so a running machine can
-# `git pull` later) rather than a COPY-ed file dump. Clone the dotfiles repo
-# at the submodule's pinned SHA (URL + SHA passed as build args from the root
-# Makefile, sourced from .gitmodules + the submodule checkout), then check it
-# out and put it on a clearly-named local `pinned-<sha>` branch so the pin is
-# obvious and easy to opt out of. blobless clone keeps the fetched history
-# small while still leaving a recoverable repo. This runs as root: the home
-# dir is created by the first-boot graft, not here, so WORKDIR below is still
-# root-owned at this point. The clone is chown'd to the bake account so the
-# repo ends up owned by the same user that reads it - no git safe.directory
-# needed. The build needs network for this step; ca-certificates is installed
-# above so git can verify TLS.
+# The guest's ~/dotfiles.baked must be a real git repo (so a running machine
+# can `git pull` later) rather than a COPY-ed file dump. Clone the dotfiles
+# repo at the submodule's pinned SHA (URL + SHA passed as build args from the
+# root Makefile, sourced from .gitmodules + the submodule checkout), then
+# check it out and put it on a clearly-named local `pinned-<sha>` branch so
+# the pin is obvious and easy to opt out of. blobless clone keeps the fetched
+# history small while still leaving a recoverable repo. This runs as root:
+# the home dir is created by the first-boot graft, not here. The clone is
+# chown'd to the bake account so the repo ends up owned by the same user
+# that reads it - no git safe.directory needed. The build needs network for
+# this step; ca-certificates is installed above so git can verify TLS.
 ARG DOTFILES_URL
 ARG DOTFILES_SHA
-RUN git clone --filter=blob:none --no-checkout "${DOTFILES_URL}" "${BAKED_HOME}/dotfiles" \
-    && git -C "${BAKED_HOME}/dotfiles" checkout "${DOTFILES_SHA}" \
-    && git -C "${BAKED_HOME}/dotfiles" switch -c "pinned-$(printf '%s' "${DOTFILES_SHA}" | cut -c1-7)" \
-    && chown -R ${BAKED_UID}:${BAKED_UID} "${BAKED_HOME}/dotfiles"
+RUN git clone --filter=blob:none --no-checkout "${DOTFILES_URL}" "${BAKED_HOME}/dotfiles.baked" \
+    && git -C "${BAKED_HOME}/dotfiles.baked" checkout "${DOTFILES_SHA}" \
+    && git -C "${BAKED_HOME}/dotfiles.baked" switch -c "pinned-$(printf '%s' "${DOTFILES_SHA}" | cut -c1-7)" \
+    && test -e "${BAKED_HOME}/dotfiles.baked/.git" \
+    && chown -R ${BAKED_UID}:${BAKED_UID} "${BAKED_HOME}/dotfiles.baked"
+
+# default ~/dotfiles is a symlink to the baked clone. Relative target: the
+# first-boot graft rewrites only baked-path text and absolute baked-path
+# symlinks, so this survives the copy untouched.
+RUN ln -s dotfiles.baked ${BAKED_HOME}/dotfiles
+
+# the baked-home files are shared by every flavor (container-machine/
+# template/home/), so the ~/ Makefile + README read the same everywhere.
+COPY --chown=${BAKED_UID}:${BAKED_UID} container-machine/template/home/Makefile ${BAKED_HOME}/Makefile
+COPY --chown=${BAKED_UID}:${BAKED_UID} container-machine/template/home/README.md ${BAKED_HOME}/README.md
 
 USER ${BAKED_USER}
 ENV USER=${BAKED_USER}
@@ -128,6 +148,8 @@ WORKDIR ${BAKED_HOME}
 RUN rm -f ${BAKED_HOME}/.bashrc ${BAKED_HOME}/.profile ${BAKED_HOME}/.bash_logout \
     && touch ${BAKED_HOME}/.local.zshrc
 
+# setup.sh runs from the baked clone; through the symlink it reads as
+# ~/dotfiles, which is the same layout the first-boot re-run uses.
 RUN SKIP_INSTALL_DOOM=1 SKIP_INSTALL_VIM_PLUGINS=1 HINT_FOR_HM_NO_DCONF=1 \
       ${BAKED_HOME}/dotfiles/setup.sh
 
@@ -139,9 +161,10 @@ RUN . ${BAKED_HOME}/.nix-profile/etc/profile.d/nix.sh \
 
 # ---- first-boot graft service (root: it manages other accounts) ----
 USER root
-COPY container-machine/ubuntu/dotfiles-cm-firstboot.service /etc/systemd/system/dotfiles-cm-firstboot.service
-COPY container-machine/ubuntu/bin/dotfiles-cm-firstboot.sh /usr/local/sbin/dotfiles-cm-firstboot
+COPY container-machine/ubuntu/boot/firstboot.service /etc/systemd/system/dotfiles-cm-firstboot.service
+COPY container-machine/ubuntu/boot/firstboot.sh /usr/local/sbin/dotfiles-cm-firstboot
 RUN chmod 0755 /usr/local/sbin/dotfiles-cm-firstboot \
+    && grep -qF 'BAKED_HOME="/var/lib/dotfiles-cm/baked-home"' /usr/local/sbin/dotfiles-cm-firstboot \
     && systemctl enable dotfiles-cm-firstboot.service
 
 # ---- purge the throwaway identity (user-agnostic hand-off) ----
@@ -163,6 +186,8 @@ RUN set -eux; \
     test -z "${leftovers}"; \
     test -z "$(ls -A /home 2>/dev/null || true)"; \
     test -d "${BAKED_HOME}"; \
+    test -e "${BAKED_HOME}/dotfiles.baked/.git"; \
+    test -L "${BAKED_HOME}/dotfiles"; \
     chmod -R a+rwX /nix
 
 # ---- final: the whole purged rootfs as a single layer ----

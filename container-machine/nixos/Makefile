@@ -19,7 +19,7 @@ IMAGE ?= local/dotfiles-nixos-cm:latest
 PUBLISHED_IMAGE ?= ghcr.io/ryuheechul/dotfiles-launchpad/dotfiles-nixos-cm:latest
 HERE := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 # build context stays the repo root: the Dockerfile COPYies this flavor's
-# own bin/ + unit files from there (the dotfiles repo is cloned at build
+# own boot/ + bin/ from there (the dotfiles repo is cloned at build
 # time from the submodule pin, not COPYied)
 CONTEXT := $(abspath $(HERE)/../..)
 # pin the dotfiles repo cloned into the image: URL from .gitmodules, SHA from

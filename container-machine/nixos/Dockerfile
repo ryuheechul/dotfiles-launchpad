@@ -4,9 +4,10 @@
 # the machine runtime creates. No host username/uid is baked into a live
 # account, so any host can boot it.
 #
-# Build context is the repo root (this flavor's bin/ + unit files get
-# COPYied from there; the dotfiles repo is cloned at build time from the
-# submodule pin, not COPYied), so the Makefile lives here and passes all
+# Build context is the repo root (this flavor's boot/ + bin/ and the
+# shared container-machine/template/home/ get COPYied from there; the
+# dotfiles repo is cloned at build time from the submodule pin, not
+# COPYied), so the Makefile lives here and passes all
 # paths + build args explicitly:
 #   make build   (container build, same tooling as the machine runtime)
 #
@@ -22,6 +23,16 @@
 #     cannot collide with any runtime uid); outside /home so it can never
 #     collide with the runtime username's /home/<name> (the runtime refuses
 #     to provision a user whose home path already exists in the image)
+#   /var/lib/dotfiles-nixos-cm/baked-home/dotfiles.baked - the image's
+#     pinned clone of the dotfiles repo (on a pinned-<sha> branch)
+#   /var/lib/dotfiles-nixos-cm/baked-home/dotfiles -> dotfiles.baked - the
+#     default ~/dotfiles; a relative symlink so the graft's rewrite leaves it
+#     alone. ~/dotfiles.host is created at first boot (points at the host's
+#     repo).
+#   boot/ - this flavor's graft files, by destination: firstboot.sh +
+#     firstboot.service go to /usr/local/sbin and /usr/lib/systemd/system.
+#     The baked-home files are shared by all flavors and live in
+#     container-machine/template/home/ (Makefile, README.md).
 #   /usr/lib/systemd/system/dotfiles-nixos-cm-firstboot.{service} + wants
 #     symlink - waits for the runtime's user setup (it writes sudoers
 #     last), swaps the fresh home for the template, rewrites the baked
@@ -50,22 +61,45 @@ FROM ghcr.io/ryuheechul/provision/nixos-cm:latest
 #   activation regenerates /etc/passwd on first boot anyway
 # - /usr/bin/env, normally created at boot by environment.usrbinenv, for
 #   #!/usr/bin/env scripts (the dotfiles scripts)
-RUN mkdir -p /tmp /root /etc/nix /etc/default /usr/bin && chmod 1777 /tmp \
+# - /etc/ssl/certs/ca-bundle.crt: the CA bundle activation materializes at
+#   boot. Baked here as a symlink to the store's cacert so tools that use
+#   openssl's compiled-in default (openssldir /etc/ssl/certs, e.g. git)
+#   verify TLS at build too; the cacert gcroot below keeps the symlink
+#   target alive against GC.
+RUN mkdir -p /tmp /root /etc/nix /etc/default /usr/bin /etc/ssl/certs && chmod 1777 /tmp \
     && printf 'extra-experimental-features = nix-command flakes\nbuild-users-group =\nsandbox = true\nkeep-going = true\n' >> /etc/nix/nix.conf \
     && printf 'root:x:0:0:root:/root:/bin/sh\n' > /etc/passwd \
     && printf 'root:x:0:\n' > /etc/group \
     && ln -sfn "$(ls /nix/store/*-coreutils-*/bin/env | head -1)" /usr/bin/env \
+    && ln -sfn "$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt | head -1)" /etc/ssl/certs/ca-bundle.crt \
+    && test -e /etc/ssl/certs/ca-bundle.crt \
     && whoami
+
+# nix itself carries no compiled-in cert path on this base (NixOS supplies
+# it from the environment at boot), so it needs the var declared - once,
+# here, for every later RUN. ARG (not ENV): RUN instructions see it as an
+# environment variable during the build, but only ENV is recorded in the
+# image config - the booted machine carries no such variable of ours.
+# The value is the canonical system path, which activation manages at
+# boot, so even the build view matches the booted system.
+#
+# The declaration is purely a quirk of baking under BuildKit: the same
+# base built by nix itself (provision's
+# apple/container-machine/nixos/image/default.nix,
+# https://github.com/ryuheechul/provision) needs none of it - nix's own
+# build plumbing provides the CA certs to its builds, and the booted
+# system gets /etc/ssl from activation. This build has neither at build
+# time, hence one declaration here.
+ARG SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
 
 # login shell: MachineUserSetup reads SHELL from /etc/default/useradd on
 # non-ubuntu images (fallback would be /bin/sh -> the base's
 # container-machine-shell), so bake zsh from the same pin the provision
 # builders use, expose it at a stable path, gc-root it so a later root GC
 # cannot collect it, and point useradd at it. zsh has several outputs -
-# keep the one that actually ships bin/zsh. SSL_CERT_FILE is only needed
-# at build time: /etc/ssl is materialized by activation at boot.
-RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt | head -1)" \
-    && nix build --no-link 'github:NixOS/nixpkgs/nixos-26.05#zsh' --print-out-paths \
+# keep the one that actually ships bin/zsh. TLS resolves through the
+# build's SSL_CERT_FILE (see above) - no per-RUN export needed.
+RUN nix build --no-link 'github:NixOS/nixpkgs/nixos-26.05#zsh' --print-out-paths \
       | while read -r p; do test -x "$p/bin/zsh" && echo "$p" && break; done > /tmp/zshpath \
     && test -n "$(cat /tmp/zshpath)" \
     && mkdir -p /var/lib/dotfiles-nixos-cm \
@@ -77,10 +111,10 @@ RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle
 # what apple's MachineUserSetup derives for non-ubuntu images
 RUN unset SHELL; . /etc/default/useradd; test "$SHELL" = /bin/zsh
 
-# gcroot the cacert store path the same way (SSL_CERT_FILE above is a
-# store path; roots keep both alive under a later runtime GC)
-RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt | head -1)" \
-    && nix-store --add-root /var/lib/dotfiles-nixos-cm/cacert.gcroot -r "${SSL_CERT_FILE%/etc/ssl/certs/ca-bundle.crt}"
+# gcroot the cacert store path the /etc/ssl symlink points at: a plain
+# /etc symlink does not protect against GC, the root does
+RUN cacert="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt | head -1)" \
+    && nix-store --add-root /var/lib/dotfiles-nixos-cm/cacert.gcroot -r "${cacert%/etc/ssl/certs/ca-bundle.crt}"
 
 # ---- template home, built as root ----
 # The first-boot script carries the same value as its default; the build
@@ -89,21 +123,32 @@ ENV BAKED_HOME=/var/lib/dotfiles-nixos-cm/baked-home
 
 RUN mkdir -p ${BAKED_HOME} && touch ${BAKED_HOME}/.local.zshrc
 
-# The guest's ~/dotfiles must be a real git repo (so a running machine can
-# `git pull` later) rather than a COPY-ed file dump. Clone the dotfiles repo
-# at the submodule's pinned SHA (URL + SHA passed as build args from the root
-# Makefile, sourced from .gitmodules + the submodule checkout), then check it
-# out and put it on a clearly-named local `pinned-<sha>` branch so the pin is
-# obvious and easy to opt out of. blobless clone keeps the fetched history
-# small while still leaving a recoverable repo. The whole bake runs as root,
-# which owns the clone, so no git ownership fixups are needed. The build
-# needs network for this step (it already does for nix).
+# The guest's ~/dotfiles.baked must be a real git repo (so a running machine
+# can `git pull` later) rather than a COPY-ed file dump. Clone the dotfiles
+# repo at the submodule's pinned SHA (URL + SHA passed as build args from the
+# root Makefile, sourced from .gitmodules + the submodule checkout), then
+# check it out and put it on a clearly-named local `pinned-<sha>` branch so
+# the pin is obvious and easy to opt out of. blobless clone keeps the fetched
+# history small while still leaving a recoverable repo. The whole bake runs as
+# root, which owns the clone, so no git ownership fixups are needed. The build
+# needs network for this step (it already does for nix); TLS resolves through
+# the build's SSL_CERT_FILE.
 ARG DOTFILES_URL
 ARG DOTFILES_SHA
-RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt | head -1)" \
-    && git clone --filter=blob:none --no-checkout "${DOTFILES_URL}" "${BAKED_HOME}/dotfiles" \
-    && git -C "${BAKED_HOME}/dotfiles" checkout "${DOTFILES_SHA}" \
-    && git -C "${BAKED_HOME}/dotfiles" switch -c "pinned-$(printf '%s' "${DOTFILES_SHA}" | cut -c1-7)"
+RUN git clone --filter=blob:none --no-checkout "${DOTFILES_URL}" "${BAKED_HOME}/dotfiles.baked" \
+    && git -C "${BAKED_HOME}/dotfiles.baked" checkout "${DOTFILES_SHA}" \
+    && git -C "${BAKED_HOME}/dotfiles.baked" switch -c "pinned-$(printf '%s' "${DOTFILES_SHA}" | cut -c1-7)" \
+    && test -e "${BAKED_HOME}/dotfiles.baked/.git"
+
+# default ~/dotfiles is a symlink to the baked clone. Relative target: the
+# first-boot graft rewrites only baked-path text and absolute baked-path
+# symlinks, so this survives the copy untouched.
+RUN ln -s dotfiles.baked ${BAKED_HOME}/dotfiles
+
+# the baked-home files are shared by every flavor (container-machine/
+# template/home/), so the ~/ Makefile + README read the same everywhere.
+COPY container-machine/template/home/Makefile ${BAKED_HOME}/Makefile
+COPY container-machine/template/home/README.md ${BAKED_HOME}/README.md
 
 # mirror the home-manager half of bootstrap/foundation/nixos/switch.sh
 # (init + switch), with the same SKIP_* guards the ubuntu flavor bakes
@@ -115,8 +160,7 @@ RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle
 # stay in the store and the switch converges (observed: 7 attempts).
 # The generated home.nix must carry the baked user (root); the first-boot
 # script rewrites it to the runtime account.
-RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt | head -1)" \
-    && export HOME="${BAKED_HOME}" USER=root \
+RUN export HOME="${BAKED_HOME}" USER=root \
     && cd "${BAKED_HOME}/dotfiles" \
     && SKIP_INSTALL_DOOM=1 SKIP_INSTALL_VIM_PLUGINS=1 HINT_FOR_HM_NO_DCONF=1 ./nix/bin/init-hm.sh \
     && ok=0 && i=1 \
@@ -142,8 +186,8 @@ RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle
 # plant the unit + its wanted-by symlink under /usr/lib. `systemctl
 # enable` cannot be used: no systemd runs at build time and the /etc
 # location it would write is the read-only one at boot.
-COPY container-machine/nixos/dotfiles-nixos-cm-firstboot.service /usr/lib/systemd/system/dotfiles-nixos-cm-firstboot.service
-COPY container-machine/nixos/bin/dotfiles-nixos-cm-firstboot.sh /usr/local/sbin/dotfiles-nixos-cm-firstboot
+COPY container-machine/nixos/boot/firstboot.service /usr/lib/systemd/system/dotfiles-nixos-cm-firstboot.service
+COPY container-machine/nixos/boot/firstboot.sh /usr/local/sbin/dotfiles-nixos-cm-firstboot
 RUN chmod 0755 /usr/local/sbin/dotfiles-nixos-cm-firstboot \
     && grep -qF "BAKED_HOME=\"${BAKED_HOME}\"" /usr/local/sbin/dotfiles-nixos-cm-firstboot \
     && mkdir -p /usr/lib/systemd/system/multi-user.target.wants \
@@ -159,6 +203,8 @@ RUN chmod 0755 /usr/local/sbin/dotfiles-nixos-cm-firstboot \
 # shell chain.
 RUN test -z "$(ls -A /home 2>/dev/null || true)" \
     && test -d "${BAKED_HOME}" \
+    && test -e "${BAKED_HOME}/dotfiles.baked/.git" \
+    && test -L "${BAKED_HOME}/dotfiles" \
     && /bin/sh -c true \
     && /usr/bin/env true \
     && test -x /bin/zsh \

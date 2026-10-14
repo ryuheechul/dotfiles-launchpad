@@ -41,12 +41,28 @@ image has to carry this machinery: it must boot for *any* host user, so
 nothing identity-specific may live in a real account:
 
 - the dotfiles bake as a template home, never as a live account;
+- the home carries three dotfiles paths - the pinned clone
+  (`~/dotfiles.baked`), a default symlink (`~/dotfiles`), and
+  `~/dotfiles.host` created at first boot toward the bind-mounted host
+  checkout - flipped with the `~/` Makefile;
 - a first-boot service grafts the template onto whatever account the
   runtime created;
 - the machinery is optional - provision the machine yourself and a plain
   base image plus your own clone and bootstrap gets you the same dotfiles
   (option b in the
   [nixos flavor README](./nixos/#b-skip-this-image-use-provisionnixos-cm)).
+
+The full breakdown of this design - the account model, the template home,
+the first-boot graft, and each flavor's delta - is in
+[how-it-works.md](./docs/how-it-works.md).
+
+**Storage cost - pay it knowingly.** Baking costs disk, and the two
+halves behave differently: the image's ~12 GB per flavor is *permanent*
+(only deleting the image reclaims it), while the machine's own copy is a
+sparse file that shrinks as you remove content or delete the machine.
+See [storage-cost.md](./docs/storage-cost.md) for the full breakdown - with a
+diagram of the two reclaim paths - before choosing between the image and
+the manual base route.
 
 ## Local (macOS) vs CI builds
 
@@ -82,14 +98,22 @@ Each supported OS is a flavor directory:
 - [`ubuntu/`](./ubuntu/) - `dotfiles-cm`, the shipped flavor: Ubuntu 24.04
   with systemd as `/sbin/init` and dotfiles baked through `setup.sh`
   (single-user nix + home-manager). See its
-  [README](./ubuntu/README.md) for the user model, build, and launch flow.
+  [Ubuntu flavor](./ubuntu/README.md) for the user model, build, and launch flow.
 - [`nixos/`](./nixos/) - `dotfiles-nixos-cm`: NixOS flavor on top of
   [ryuheechul/provision](https://github.com/ryuheechul/provision)'s
   published `nixos-cm` base, which also carries a general
   [troubleshoot section](https://github.com/ryuheechul/provision/blob/main/apple/container-machine/README.md#troubleshoot)
   for machine runtime issues. See its
-  [README](./nixos/README.md) for the user model, build, and launch flow.
+  [NixOS flavor](./nixos/README.md) for the user model, build, and launch flow.
 
 Both flavors share one design - bake what can be baked, defer the real
 user to a one-time first boot - with the full breakdown (common machinery
-plus per-flavor deltas) in [how-it-works.md](./how-it-works.md).
+plus per-flavor deltas) in [how-it-works.md](./docs/how-it-works.md).
+
+Each flavor directory has the same shape: a `Dockerfile` (the bake; the
+dotfiles repo is cloned at build time from the submodule pin), a
+`Makefile` (build/launch targets, resolves the repo context and the
+dotfiles pin), `boot/` (the flavor's first-boot script and unit),
+`bin/` (the launch helper), and the flavor's `README.md`. The files that
+land in the baked home are shared across flavors in
+[template/home/](./template/home/).

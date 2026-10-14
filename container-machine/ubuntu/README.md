@@ -30,8 +30,9 @@ CONTAINER_IMAGE=local/dotfiles-cm:latest make launch
 ```
 
 The Dockerfile takes the repo root as its build context (it clones the
-`dotfiles` submodule's pinned SHA, so `~/dotfiles` lands as a real git
-repo on a `pinned-<sha7>` branch); the Makefile resolves that context, its
+`dotfiles` submodule's pinned SHA into the image's
+`~/dotfiles.baked`, a real git repo on a `pinned-<sha7>` branch);
+the Makefile resolves that context, its
 own location, and the pin, so `make build` works from any directory. The image
 builds with `container build` straight into the machine runtime's image
 store: this is a container machine, so stay on the same tooling - no docker
@@ -52,18 +53,24 @@ The design in one line: bake whatever can be baked at build time, and
 defer to a one-time first-boot service whatever needs the real user (who
 only exists at runtime, and is never whoever ran the build):
 
-- **baked**: the dotfiles clone, home-manager's generated config, and the
+- **baked**: the dotfiles clone (`~/dotfiles.baked`, with `~/dotfiles`
+  symlinking to it by default), home-manager's generated config, and the
   nix toolchain - all identity-free, kept as a template home at
   `/var/lib/dotfiles-cm/baked-home` (built as a throwaway `dotted`
   account that is purged from the image at the end of the build; nothing
-  under `/home`, so the runtime can always provision `/home/<name>`).
+  under `/home`, so the runtime can always provision `/home/<name>`), plus
+  a `~/` [Makefile](../template/home/Makefile) and
+  the [home README](../template/home/README.md) for switching `~/dotfiles` between
+  sources.
 - **deferred to first boot**: the runtime creates the real account (your
   host user) on boot; `dotfiles-cm-firstboot.service` waits for it (the
   runtime writes sudoers last), grafts the template onto the account,
-  rewrites the baked paths, hands over `/nix`, then re-runs
+  rewrites the baked paths, creates `~/dotfiles.host` -> your host's
+  `/Users/<you>/dotfiles` checkout, hands over `/nix`, then re-runs
   `hm.sh switch` + `configuration.sh` so every generated file carries the
   real identity.
-- **one-time**: a verify gate (no baked paths left, `nix` on PATH,
+- **one-time**: a verify gate (no baked paths left, the three dotfiles
+  paths intact, `nix` on PATH,
   `my_dot_d` rebased) must pass before the marker
   `/var/lib/dotfiles-cm/firstboot.done` is written; on failure the unit
   retries on the next boot, always from a clean re-graft.
@@ -77,7 +84,7 @@ default `dotfiles-cm`. Progress and failures:
 
 The full detail - the sudoers wait, the single-user nix handover, the
 zshenv quirk, and the nixos flavor's take on all of this - lives in the
-shared [how-it-works.md](../how-it-works.md).
+shared [how-it-works.md](../docs/how-it-works.md).
 
 ## Clean up
 

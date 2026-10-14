@@ -1,71 +1,30 @@
-#!/run/current-system/sw/bin/bash
-# dotfiles-nixos-cm first boot: graft the baked template home onto the account
-# the machine runtime created, then run the dotfiles' canonical NixOS bootstrap
-# as that account (foundation switch.sh + configuration.sh) so every generated
-# store file carries the real home instead of the baked one.
-#
-# shebang: systemd's service PATH has no bash (bash lives in the system
-# profile only, and /usr/bin/env would need bash on PATH to find it), while
-# /run/current-system exists by the time any unit starts.
+#!/usr/bin/env bash
+# dotfiles-cm first boot: graft the baked template home onto the account the
+# machine runtime created, then re-run home-manager as that account so every
+# generated store file carries the real home instead of the baked one.
 #
 # Ordering: the runtime's embedded user setup runs on every boot *after*
 # systemd is up and writes /etc/sudoers.d/<user> as its very last step (see
 # apple/container MachineUserSetup.swift) - that file is our signal that the
-# account, home, and sudo grant are all in place. The provisioning shell
-# itself comes from /etc/default/useradd SHELL (the non-ubuntu branch of
-# MachineUserSetup.swift), baked in the Dockerfile next to /bin/zsh.
+# account, home, and sudo grant are all in place.
 #
 # Idempotent: the marker short-circuits re-runs, and a retry always starts
 # from a wipe + fresh copy of the pristine template, so partial runs converge.
 #
-# Differences from the ubuntu flavor: the bake ran as root (no throwaway
-# account), so home.nix says root and .nix-profile points at per-user/root;
-# nix is multi-user here, so /nix stays root-owned (the daemon needs it) and
-# instead of chown -R /nix we hand the account its own per-user profile
-# dirs, which nix never creates on its own for a fresh user.
-#
-# BAKED_HOME's default below; the Dockerfile greps for this exact assignment
-# after COPYing the script, so the build fails if the two ever drift.
+# BAKED_USER/BAKED_HOME must match the ARG/ENV defaults in Dockerfile.
 set -euo pipefail
 
-BAKED_USER="root"
-BAKED_HOME="/var/lib/dotfiles-nixos-cm/baked-home"
-MARKER="/var/lib/dotfiles-nixos-cm/firstboot.done"
-WAIT_SECS="${DOTFILES_NIXOS_CM_WAIT_SECS:-300}"
+BAKED_USER="dotted"
+BAKED_HOME="/var/lib/dotfiles-cm/baked-home"
+MARKER="/var/lib/dotfiles-cm/firstboot.done"
+WAIT_SECS="${DOTFILES_CM_WAIT_SECS:-300}"
 
-log() { printf '[dotfiles-nixos-cm-firstboot] %s\n' "$*" >&2; }
+log() { printf '[dotfiles-cm-firstboot] %s\n' "$*" >&2; }
 fail() { log "verify failed: $*"; exit 1; }
 
 if test -f "$MARKER"; then
   exit 0
 fi
-
-# Scans below write NUL-delimited results to $1. Errors surface instead of
-# reading as "clean": a find failure aborts (set -e), and grep exit 1 (no
-# match, the expected case) is distinguished from >= 2 (read error).
-scan_baked_files() {
-  local out="$1" list f rc
-  list="$(mktemp)"
-  find "$home" -xdev -type f -size -32M -print0 > "$list"
-  : > "$out"
-  while IFS= read -r -d '' f; do
-    if grep -qIlZ -- "$BAKED_HOME" "$f"; then
-      printf '%s\0' "$f" >> "$out"
-    else
-      rc=$?
-      if test "$rc" -ge 2; then
-        rm -f "$list"
-        log "grep rc=$rc while scanning $f"
-        return "$rc"
-      fi
-    fi
-  done < "$list"
-  rm -f "$list"
-}
-
-scan_baked_links() {
-  find "$home" -xdev -type l -lname "$BAKED_HOME*" -print0 > "$1"
-}
 
 # --- 1. wait for the runtime's user setup (sudoers written last) ---
 new_user=""
@@ -110,10 +69,27 @@ if test -z "$home" || test "$home" = / || test "$home" = "$BAKED_HOME"; then
   exit 1
 fi
 
-# --- 2. replace the fresh home with the template ---
+# --- 2. replace the fresh skel home with the template ---
 log "grafting template: $BAKED_HOME -> $home"
 find "$home" -xdev -mindepth 1 -delete
 cp -a "$BAKED_HOME/." "$home/"
+
+# the three dotfiles paths (see template/home/README.md in this flavor):
+# ~/dotfiles.baked is the image's pinned clone (came with the copy above),
+# ~/dotfiles defaults to it via a relative symlink (also copied; pin the
+# default here so a partial run always converges back to it), and
+# ~/dotfiles.host is a stable indirection to the host's own checkout. The
+# host path cannot be baked - the image cannot know the host username - so
+# it is created here, once: an existing symlink is left alone so a
+# customized path survives.
+if test ! -e "$home/dotfiles.host"; then
+  ln -sfn "/Users/$new_user/dotfiles" "$home/dotfiles.host"
+  log "created ~/dotfiles.host -> /Users/$new_user/dotfiles"
+else
+  log "leaving existing ~/dotfiles.host -> $(readlink "$home/dotfiles.host")"
+fi
+ln -sfn dotfiles.baked "$home/dotfiles"
+
 chown -R "$uid:$gid" "$home"
 
 # compiled zsh caches embed absolute paths from the bake - drop them; zsh
@@ -122,81 +98,75 @@ find "$home" -xdev -type f -name '*.zwc' -delete
 
 # rewrite the baked path in text files under the home (grep -I: text only,
 # binary state such as sqlite caches is left alone)
-hits="$(mktemp)"
-scan_baked_files "$hits"
 while IFS= read -r -d '' f; do
   sed -i "s|$BAKED_HOME|$home|g" "$f"
   log "rewrote $f"
-done < "$hits"
+done < <(find "$home" -xdev -type f -size -32M -exec grep -IlZ -- "$BAKED_HOME" {} + 2>/dev/null || true)
 
 # absolute symlinks still pointing into the template home
-scan_baked_links "$hits"
 while IFS= read -r -d '' link; do
   target="$(readlink "$link")"
   ln -sfn "${target/#$BAKED_HOME/$home}" "$link"
   log "relinked $link"
-done < "$hits"
-rm -f "$hits"
+done < <(find "$home" -xdev -type l -lname "$BAKED_HOME*" -print0 2>/dev/null || true)
 
 # home.nix (generated by init-hm.sh at bake time) carries the username as
-# well as the path; switch.sh reruns init-hm below and regenerates it too, but
-# fix it in place first so a partial retry still has the right identity
+# well as the path; init-hm early-exits at runtime so fix it in place
 hm_conf="$home/.config/home-manager/home.nix"
 if test -f "$hm_conf"; then
   sed -i "s|home.username = \"${BAKED_USER}\"|home.username = \"${new_user}\"|" "$hm_conf"
   log "rewrote $hm_conf"
 fi
 
-# --- 3. hand the nix profile state to the runtime account ---
-# the template's .nix-profile points at per-user/root (the bake ran as
-# root) and nix never creates a fresh account's per-user dirs on its own
-# (the profile lock fails with "No such file or directory"), so repoint
-# the symlink and create both dirs. /nix itself stays root-owned: this is
-# multi-user nix and the daemon needs the store, so unlike the ubuntu
-# flavor there is no chown -R /nix.
-log "repointing profile -> per-user/$new_user"
-ln -sfn "/nix/var/nix/profiles/per-user/${new_user}/profile" "$home/.nix-profile"
-chown -h "$uid:$gid" "$home/.nix-profile"
-mkdir -p "/nix/var/nix/profiles/per-user/${new_user}" \
-         "/nix/var/nix/gcroots/per-user/${new_user}"
-chown -R "$uid:$gid" \
-  "/nix/var/nix/profiles/per-user/${new_user}" \
-  "/nix/var/nix/gcroots/per-user/${new_user}"
+# --- 3. hand the nix state tree to the runtime account ---
+# single-user nix runs without a daemon, so the invoking user opens the
+# local store directly and chmods state dirs on every open - only the owner
+# may do that (NixOS/nix#3435), and the whole tree was baked as the
+# throwaway uid. This mirrors the ownership an upstream single-user
+# install would have created: the runtime account owns /nix.
+log "chown /nix -> $uid:$gid"
+chown -R "$uid:$gid" /nix
 
-# --- 4. run the canonical bootstrap as the runtime account ---
-# mirrors the NixOS flow in dotfiles/README.md: foundation switch.sh (nixos-rebuild
-# first, then init-hm + hm switch - the base is built to be switchable), then the
-# platform-agnostic configuration.sh. The exports are inherited by every step and
-# keep the bake's guards (nothing device-only, no dconf on a headless machine);
-# nested sudo inside switch.sh works because we waited for the runtime's sudoers.
+# --- 4. re-run home-manager + configuration as the runtime account ---
+# mirrors the post-install section of setup.sh (the nix install itself is
+# skipped: the profile was grafted from the template); same SKIP_* guards as
+# the bake so nothing tries to redo device-only steps.
 user_steps="$(cat <<'EOS'
 set -e
 export SKIP_INSTALL_DOOM=1 SKIP_INSTALL_VIM_PLUGINS=1 HINT_FOR_HM_NO_DCONF=1
 cd "$HOME/dotfiles"
-./bootstrap/foundation/nixos/switch.sh
+. "$HOME/.nix-profile/etc/profile.d/nix.sh"
+./nix/bin/init-hm.sh
+./nix/bin/hm.sh switch
 ./bootstrap/configuration.sh
 EOS
 )"
-log "running switch.sh + configuration.sh as $new_user"
+log "re-running hm + configuration as $new_user"
 sudo -u "$new_user" -H env \
   USER="$new_user" LOGNAME="$new_user" HOME="$home" \
   bash -c "$user_steps"
 
 # --- 5. verify before committing the marker ---
-hits="$(mktemp)"
-scan_baked_files "$hits"
-if test -s "$hits"; then
+leftovers="$(find "$home" -xdev -type f -size -32M -exec grep -IlZ -- "$BAKED_HOME" {} + 2>/dev/null || true)"
+if test -n "$leftovers"; then
   log "baked path still present in:"
-  while IFS= read -r -d '' f; do printf '%s\n' "$f" >&2; done < "$hits"
+  printf '%s\n' "$leftovers" >&2
   exit 1
 fi
-scan_baked_links "$hits"
-if test -s "$hits"; then
+left_links="$(find "$home" -xdev -type l -lname "$BAKED_HOME*" 2>/dev/null || true)"
+if test -n "$left_links"; then
   log "baked-path symlinks remain:"
-  while IFS= read -r -d '' link; do printf '%s\n' "$link" >&2; done < "$hits"
+  printf '%s\n' "$left_links" >&2
   exit 1
 fi
-rm -f "$hits"
+
+# the dotfiles layout must have survived the graft whole
+readlink "$home/dotfiles" | grep -qx "dotfiles.baked" \
+  || fail "~/dotfiles is not dotfiles.baked: $(readlink "$home/dotfiles" 2>/dev/null || echo '<not a symlink>')"
+test -e "$home/dotfiles.baked/.git" || fail "baked clone missing .git"
+test -e "$home/dotfiles.host" || fail "~/dotfiles.host missing"
+test -e "$home/Makefile" || fail "grafted Makefile missing"
+test -e "$home/README.md" || fail "grafted README.md missing"
 
 # hm must have regenerated its entrypoints against the runtime home
 zshrc_target="$(readlink "$home/.zshrc" 2>/dev/null || true)"

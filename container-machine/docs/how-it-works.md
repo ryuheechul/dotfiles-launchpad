@@ -1,16 +1,22 @@
 # How the machine images work
 
-Start with the [parent README](./README.md) for context first - what a
+Start with the [container-machine README](../README.md) for context first - what a
 container machine is compared to a typical container, why this repo uses
 one, and the flavors; this page is the detail behind each flavor's
 *How it works* sections.
 
-Both flavors ([ubuntu/](./ubuntu/) and [nixos/](./nixos/)) share one design:
+Both flavors ([ubuntu/](../ubuntu/) and [nixos/](../nixos/)) share one design:
 bake whatever can be baked at image-build time, and defer everything that
 needs the real user to a one-time first-boot service. The real user only
 exists inside the running machine - the machine runtime creates it from
 your host user on every boot - and is never the identity that ran the
 build.
+
+The bake is also a storage decision - see
+[storage-cost.md](./storage-cost.md) for the full breakdown (with a
+diagram): the image's ~12-13 GB is permanent, while the machine's own
+copy is a sparse file that shrinks as you remove content or delete the
+machine.
 
 ## Common machinery
 
@@ -38,6 +44,37 @@ Nothing under `/home` exists in either image, so the runtime can always
 provision `/home/<name>`; a baked live account holding a uid or username
 the host might use would make the runtime refuse to provision.
 
+### Three dotfiles paths in the home
+
+The clone happens at build time (network): the submodule's pin is checked
+out on a `pinned-<sha7>` branch. The template home carries the clone
+under a stable name, plus two symlinks around it:
+
+| Path | What it is |
+| --- | --- |
+| `~/dotfiles.baked` | the image's pinned clone (frozen; `pinned-<sha7>` branch) |
+| `~/dotfiles` | symlink, defaults to `dotfiles.baked` (relative, so the graft's path rewrite leaves it alone) |
+| `~/dotfiles.host` | symlink to the host's own checkout at `/Users/<you>/dotfiles`; created at first boot because the image cannot know the host username |
+
+The grafted `~/` Makefile (`make status` / `point-baked` / `point-host`)
+and the `~/` README explaining the table come from the shared
+[template/home/](../template/home/), identical for every flavor.
+
+### The source of everything COPYied: `boot/` and `template/`
+
+Per flavor, `boot/` holds its flavor-specific graft files, by
+destination:
+
+- `boot/firstboot.sh` -> `/usr/local/sbin/dotfiles-<flavor>-firstboot`;
+- `boot/firstboot.service` -> the unit directory (`/etc/systemd/system`
+  on ubuntu, `/usr/lib/systemd/system` on nixos).
+
+The common baked-home files come from the shared
+[template/home/](../template/home/) in the parent directory. Every file
+COPYied into the image lives under one of the two: the flavor's `boot/`
+(its first-boot graft files) or the shared `template/home/` (the baked
+home).
+
 ### First boot grafts the template, then runs the bootstrap once
 
 `dotfiles-<flavor>-firstboot.service` +
@@ -45,13 +82,16 @@ the host might use would make the runtime refuse to provision.
 
 1. wait for the runtime's sudoers signal (bounded by `*_WAIT_SECS`,
    default 300);
-2. wipe the fresh home, copy the template in, `chown` it to the account;
+2. wipe the fresh home, copy the template in, create `~/dotfiles.host`
+   (once; an existing one is left alone) and pin `~/dotfiles` back to
+   `dotfiles.baked`, `chown` it to the account;
 3. rewrite the baked path in text files and absolute symlinks, drop stale
    `.zwc` caches;
 4. hand the nix state to the account (see the flavor deltas below);
 5. re-run the dotfiles bootstrap as the runtime account so every generated
    file carries the real identity;
-6. verify (no baked paths left, `nix` on PATH, `my_dot_d` rebased) and
+6. verify (no baked paths left, the three dotfiles paths intact,
+   `nix` on PATH, `my_dot_d` rebased) and
    only then write the marker `/var/lib/dotfiles-<flavor>/firstboot.done`.
 
 The marker short-circuits every later boot. On failure the unit retries on
@@ -88,7 +128,7 @@ how long the unit waits for the sudoers signal.
   - runs `hm.sh switch` + `configuration.sh` - no `nixos-rebuild`, the
     system layer is plain Ubuntu.
 - **the bake**:
-  - clones the submodule's pinned SHA (as a real git repo on a
+  - clones the submodule's pin as `~/dotfiles.baked` (real git repo on a
     `pinned-<sha7>` branch) and cleans the Ubuntu skel files
     home-manager would refuse to overwrite.
   - runs `setup.sh` with the same `SKIP_*` guards as the root Dockerfile,
@@ -130,14 +170,23 @@ how long the unit waits for the sudoers signal.
     (`nixos-rebuild` needs a booted machine), so the NixOS system itself
     is still built at first boot.
 - **the bake**:
-  - clones the submodule's pinned SHA (as a real git repo on a
+  - clones the submodule's pin as `~/dotfiles.baked` (real git repo on a
     `pinned-<sha7>` branch) and `touch ~/.local.zshrc` so
     `configuration.sh` skips its device-only template seed.
   - runs `init-hm.sh` + `hm.sh switch` with the same `SKIP_*` guards as
     the root Dockerfile.
-  - build-time quirks (sandboxed-build retries, `keep-going`, the
-    `SSL_CERT_FILE` handling) live as comments next to the relevant
-    [Dockerfile](./nixos/Dockerfile) steps.
+  - build-time quirks (sandboxed-build retries, `keep-going`, TLS: the
+    base's nix carries no compiled-in cert path, so the build declares
+    `SSL_CERT_FILE` once as a build ARG - visible to every build step,
+    absent from the image config - at the canonical
+    `/etc/ssl/certs/ca-bundle.crt` path that activation manages at boot,
+    plus the bundle symlinked there for tools that use openssl's
+    default; purely a BuildKit-bake quirk - the same base built by nix
+    itself, in
+    [provision's image build](https://github.com/ryuheechul/provision/blob/main/apple/container-machine/nixos/image/default.nix),
+    needs none of it because nix's own build plumbing provides the CA
+    certs) live as comments next to
+    the relevant [Dockerfile](../nixos/Dockerfile) steps.
 - **the unit**:
   - planted under `/usr/lib/systemd/system` (with its wanted-by
     symlink): at boot `/etc/systemd/system` is a read-only store symlink
