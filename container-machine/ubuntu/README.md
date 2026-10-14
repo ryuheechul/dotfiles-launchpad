@@ -29,9 +29,10 @@ make build
 CONTAINER_IMAGE=local/dotfiles-cm:latest make launch
 ```
 
-The Dockerfile takes the repo root as its build context (it COPYies the
-`dotfiles` submodule); the Makefile resolves both that context and its own
-location, so `make build` works from any directory. The image
+The Dockerfile takes the repo root as its build context (it clones the
+`dotfiles` submodule's pinned SHA, so `~/dotfiles` lands as a real git
+repo on a `pinned-<sha7>` branch); the Makefile resolves that context, its
+own location, and the pin, so `make build` works from any directory. The image
 builds with `container build` straight into the machine runtime's image
 store: this is a container machine, so stay on the same tooling - no docker
 involved (CI builds the same Dockerfile with `docker buildx` instead - see

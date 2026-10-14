@@ -18,9 +18,15 @@ MACHINE ?= dotfiles-nixos-cm
 IMAGE ?= local/dotfiles-nixos-cm:latest
 PUBLISHED_IMAGE ?= ghcr.io/ryuheechul/dotfiles-launchpad/dotfiles-nixos-cm:latest
 HERE := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-# build context stays the repo root: the Dockerfile COPYies the dotfiles
-# submodule and its own bin/ + unit files from there
+# build context stays the repo root: the Dockerfile COPYies this flavor's
+# own bin/ + unit files from there (the dotfiles repo is cloned at build
+# time from the submodule pin, not COPYied)
 CONTEXT := $(abspath $(HERE)/../..)
+# pin the dotfiles repo cloned into the image: URL from .gitmodules, SHA from
+# the submodule checkout. Defined here (not just exported from the root
+# Makefile) so `make build` works when run from this directory directly.
+DOTFILES_URL := $(shell git -C $(CONTEXT) config -f .gitmodules --get submodule.dotfiles.url)
+DOTFILES_SHA := $(shell git -C $(CONTEXT) -C dotfiles rev-parse HEAD)
 
 # Built with `container build`: same tooling as the machine runtime, so no
 # docker involved. Builder networking only works once every service runs the
@@ -30,7 +36,9 @@ CONTEXT := $(abspath $(HERE)/../..)
 # buildkit sandbox defaults to 2 CPU / 2G, which OOMs nix/home-manager steps.
 .PHONY: build
 build: ## Build the image (context is the repo root)
-	container build -c 4 -m 8G -f $(HERE)Dockerfile -t $(IMAGE) $(CONTEXT)
+	container build -c 4 -m 8G \
+	  --build-arg DOTFILES_URL=$(DOTFILES_URL) --build-arg DOTFILES_SHA=$(DOTFILES_SHA) \
+	  -f $(HERE)Dockerfile -t $(IMAGE) $(CONTEXT)
 
 .PHONY: launch
 launch: ## Create the machine (or reuse) + wait for first boot

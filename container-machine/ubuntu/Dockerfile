@@ -3,8 +3,10 @@
 # service grafts onto whatever account the machine runtime creates. No host
 # username/uid is baked into a live account, so any host can boot it.
 #
-# Build context is the repo root (the dotfiles submodule gets COPYed), so
-# the Makefile lives here and passes both paths explicitly:
+# Build context is the repo root (this flavor's bin/ + unit files get
+# COPYied from there; the dotfiles repo is cloned at build time from the
+# submodule pin, not COPYied), so the Makefile lives here and passes all
+# paths + build args explicitly:
 #   make build   (container build, same tooling as the machine runtime)
 #
 # Multi-stage: every step runs in the `bake` stage, then the finished
@@ -96,11 +98,28 @@ RUN useradd -m -u ${BAKED_UID} -d ${BAKED_HOME} -s /bin/zsh ${BAKED_USER} \
     && echo "${BAKED_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${BAKED_USER} \
     && chmod 0440 /etc/sudoers.d/${BAKED_USER}
 
+# The guest's ~/dotfiles must be a real git repo (so a running machine can
+# `git pull` later) rather than a COPY-ed file dump. Clone the dotfiles repo
+# at the submodule's pinned SHA (URL + SHA passed as build args from the root
+# Makefile, sourced from .gitmodules + the submodule checkout), then check it
+# out and put it on a clearly-named local `pinned-<sha>` branch so the pin is
+# obvious and easy to opt out of. blobless clone keeps the fetched history
+# small while still leaving a recoverable repo. This runs as root: the home
+# dir is created by the first-boot graft, not here, so WORKDIR below is still
+# root-owned at this point. The clone is chown'd to the bake account so the
+# repo ends up owned by the same user that reads it - no git safe.directory
+# needed. The build needs network for this step; ca-certificates is installed
+# above so git can verify TLS.
+ARG DOTFILES_URL
+ARG DOTFILES_SHA
+RUN git clone --filter=blob:none --no-checkout "${DOTFILES_URL}" "${BAKED_HOME}/dotfiles" \
+    && git -C "${BAKED_HOME}/dotfiles" checkout "${DOTFILES_SHA}" \
+    && git -C "${BAKED_HOME}/dotfiles" switch -c "pinned-$(printf '%s' "${DOTFILES_SHA}" | cut -c1-7)" \
+    && chown -R ${BAKED_UID}:${BAKED_UID} "${BAKED_HOME}/dotfiles"
+
 USER ${BAKED_USER}
 ENV USER=${BAKED_USER}
 WORKDIR ${BAKED_HOME}
-
-COPY --chown=${BAKED_UID}:${BAKED_UID} dotfiles ${BAKED_HOME}/dotfiles
 
 # Ubuntu's /etc/skel ships default ~/.bashrc and ~/.profile; home-manager
 # (programs.bash) manages those and refuses to clobber pre-existing copies.

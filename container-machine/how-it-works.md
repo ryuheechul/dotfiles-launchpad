@@ -88,8 +88,9 @@ how long the unit waits for the sudoers signal.
   - runs `hm.sh switch` + `configuration.sh` - no `nixos-rebuild`, the
     system layer is plain Ubuntu.
 - **the bake**:
-  - copies the submodule and cleans the Ubuntu skel files home-manager
-    would refuse to overwrite.
+  - clones the submodule's pinned SHA (as a real git repo on a
+    `pinned-<sha7>` branch) and cleans the Ubuntu skel files
+    home-manager would refuse to overwrite.
   - runs `setup.sh` with the same `SKIP_*` guards as the root Dockerfile,
     then `nix-collect-garbage -d`.
   - the template home (~2G) stays in the image as the pristine graft
@@ -129,8 +130,9 @@ how long the unit waits for the sudoers signal.
     (`nixos-rebuild` needs a booted machine), so the NixOS system itself
     is still built at first boot.
 - **the bake**:
-  - copies the submodule and `touch ~/.local.zshrc` so `configuration.sh`
-    skips its device-only template seed.
+  - clones the submodule's pinned SHA (as a real git repo on a
+    `pinned-<sha7>` branch) and `touch ~/.local.zshrc` so
+    `configuration.sh` skips its device-only template seed.
   - runs `init-hm.sh` + `hm.sh switch` with the same `SKIP_*` guards as
     the root Dockerfile.
   - build-time quirks (sandboxed-build retries, `keep-going`, the

@@ -4,8 +4,10 @@
 # the machine runtime creates. No host username/uid is baked into a live
 # account, so any host can boot it.
 #
-# Build context is the repo root (the dotfiles submodule gets COPYed), so
-# the Makefile lives here and passes both paths explicitly:
+# Build context is the repo root (this flavor's bin/ + unit files get
+# COPYied from there; the dotfiles repo is cloned at build time from the
+# submodule pin, not COPYied), so the Makefile lives here and passes all
+# paths + build args explicitly:
 #   make build   (container build, same tooling as the machine runtime)
 #
 # Single-stage on purpose: unlike the ubuntu flavor there is no throwaway
@@ -87,7 +89,21 @@ ENV BAKED_HOME=/var/lib/dotfiles-nixos-cm/baked-home
 
 RUN mkdir -p ${BAKED_HOME} && touch ${BAKED_HOME}/.local.zshrc
 
-COPY dotfiles ${BAKED_HOME}/dotfiles
+# The guest's ~/dotfiles must be a real git repo (so a running machine can
+# `git pull` later) rather than a COPY-ed file dump. Clone the dotfiles repo
+# at the submodule's pinned SHA (URL + SHA passed as build args from the root
+# Makefile, sourced from .gitmodules + the submodule checkout), then check it
+# out and put it on a clearly-named local `pinned-<sha>` branch so the pin is
+# obvious and easy to opt out of. blobless clone keeps the fetched history
+# small while still leaving a recoverable repo. The whole bake runs as root,
+# which owns the clone, so no git ownership fixups are needed. The build
+# needs network for this step (it already does for nix).
+ARG DOTFILES_URL
+ARG DOTFILES_SHA
+RUN export SSL_CERT_FILE="$(ls /nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt | head -1)" \
+    && git clone --filter=blob:none --no-checkout "${DOTFILES_URL}" "${BAKED_HOME}/dotfiles" \
+    && git -C "${BAKED_HOME}/dotfiles" checkout "${DOTFILES_SHA}" \
+    && git -C "${BAKED_HOME}/dotfiles" switch -c "pinned-$(printf '%s' "${DOTFILES_SHA}" | cut -c1-7)"
 
 # mirror the home-manager half of bootstrap/foundation/nixos/switch.sh
 # (init + switch), with the same SKIP_* guards the ubuntu flavor bakes

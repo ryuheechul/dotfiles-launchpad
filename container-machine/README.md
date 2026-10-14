@@ -70,9 +70,10 @@ BuildKit-based. `container build` drives a BuildKit daemon through
 (which is also why removing the local `buildkit` container only forces a
 cold rebuild, not a different toolchain), and BuildKit is
 [docker's builder backend](https://docs.docker.com/build/buildkit) behind
-buildx. Both consume the same Dockerfile and build context (the dotfiles
-submodule) and target linux/arm64. The residual drift risk is floating
-inputs (the nixpkgs pin, the submodule commit), not the builder choice.
+buildx. Both consume the same Dockerfile and build context (the `dotfiles`
+submodule's pinned SHA, cloned at build time) and target linux/arm64. The
+residual drift risk is floating inputs (the nixpkgs pin, the submodule
+commit), not the builder choice.
 
 ## Flavors
 

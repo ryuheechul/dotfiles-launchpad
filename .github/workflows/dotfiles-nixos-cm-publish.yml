@@ -39,6 +39,14 @@ jobs:
       - name: Record short sha for the sha-<short> tag
         run: echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
 
+      # the Dockerfile clones the dotfiles submodule pin (instead of a COPY),
+      # so the build needs the URL + SHA. Derived the same way the Makefile
+      # does, from .gitmodules + the checked-out submodule.
+      - name: Record dotfiles pin for the clone build args
+        run: |
+          echo "DOTFILES_URL=$(git config -f .gitmodules --get submodule.dotfiles.url)" >> "$GITHUB_ENV"
+          echo "DOTFILES_SHA=$(git -C dotfiles rev-parse HEAD)" >> "$GITHUB_ENV"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -56,6 +64,9 @@ jobs:
           file: container-machine/nixos/Dockerfile
           platforms: linux/arm64
           push: true
+          build-args: |
+            DOTFILES_URL=${{ env.DOTFILES_URL }}
+            DOTFILES_SHA=${{ env.DOTFILES_SHA }}
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:sha-${{ env.SHORT_SHA }}
