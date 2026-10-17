@@ -199,6 +199,23 @@ sudo -u "$new_user" -H env \
   USER="$new_user" LOGNAME="$new_user" HOME="$home" \
   bash -c "$user_steps"
 
+# switch.sh reruns init-hm.sh, which regenerates home.nix with the import
+# path readlink -f-resolved to the baked clone (dotfiles.baked). That would
+# freeze home-manager onto the image's copy and make `make point-host` a
+# no-op for switch-home. Rebase the import onto the ~/dotfiles flip symlink
+# so point-baked/point-host genuinely select the source (behavior-neutral at
+# first boot: ~/dotfiles is dotfiles.baked). Same for the dfs-rhc symlink
+# configuration.sh just made (it also readlink -f-resolved to the clone).
+hm_conf="$home/.config/home-manager/home.nix"
+if test -f "$hm_conf"; then
+  sed -i 's|/dotfiles\.baked/|/dotfiles/|g' "$hm_conf"
+  grep -qF '/dotfiles/nix/home' "$hm_conf" \
+    || fail "home.nix import not rebased to ~/dotfiles: $(grep -n 'home-nix-path' "$hm_conf" 2>/dev/null)"
+fi
+ln -sfn "$home/dotfiles" "$home/.config/dfs-rhc"
+test "$(readlink "$home/.config/dfs-rhc")" = "$home/dotfiles" \
+  || fail "dfs-rhc not pointing at ~/dotfiles"
+
 # --- 5. verify before committing the marker ---
 hits="$(mktemp)"
 scan_baked_files "$hits"

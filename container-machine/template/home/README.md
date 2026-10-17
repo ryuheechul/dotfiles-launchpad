@@ -23,6 +23,13 @@ make point-baked   # use the image's baked clone
 make point-host    # use the host's repo (via ~/dotfiles.host)
 ```
 
+A flip moves the whole source at once: `~/.config/dfs-rhc` (what the zsh
+env sources and `switch-nix` runs from) and `home.nix` (what `switch-home`
+builds) both point through the `~/dotfiles` symlink, not at a resolved
+clone. So after `make point-host`, run `switch-home` (or `switch-nix`) and
+you are genuinely building from the host's repo — and `make point-baked`
+snaps you back.
+
 `~/dotfiles.host` is created once on first boot (it needs your username,
 which the image cannot know in advance). If it already exists when the
 machine boots, it is left alone so a customized path survives.

@@ -153,6 +153,16 @@ RUN rm -f ${BAKED_HOME}/.bashrc ${BAKED_HOME}/.profile ${BAKED_HOME}/.bash_logou
 RUN SKIP_INSTALL_DOOM=1 SKIP_INSTALL_VIM_PLUGINS=1 HINT_FOR_HM_NO_DCONF=1 \
       ${BAKED_HOME}/dotfiles/setup.sh
 
+# setup.sh's init-hm.sh pins home.nix's import to the resolved clone
+# (dotfiles.baked) via readlink -f, which would freeze home-manager onto
+# the image's copy and make `make point-host` a no-op for switch-home.
+# Rebase it onto the ~/dotfiles flip symlink so point-baked/point-host
+# genuinely select the source. The baked clone is what ~/dotfiles points
+# at by default, so this is behavior-neutral until a flip happens.
+RUN sed -i 's|/dotfiles\.baked/|/dotfiles/|g' ${BAKED_HOME}/.config/home-manager/home.nix \
+    && grep -qF '/dotfiles/nix/home' ${BAKED_HOME}/.config/home-manager/home.nix \
+    && ! grep -q 'dotfiles\.baked' ${BAKED_HOME}/.config/home-manager/home.nix
+
 # drop the build-only store paths; the home-manager generation and
 # ~/.nix-profile are gcroots (registered under /nix/var/nix/gcroots into the
 # template home), so the runtime closure survives

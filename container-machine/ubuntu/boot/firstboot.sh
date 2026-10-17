@@ -146,6 +146,23 @@ sudo -u "$new_user" -H env \
   USER="$new_user" LOGNAME="$new_user" HOME="$home" \
   bash -c "$user_steps"
 
+# configuration.sh makes the dfs-rhc symlink readlink -f-resolved to the
+# baked clone, which would freeze the sourced zsh env (and switch-nix's repo
+# path) onto the image's copy and make `make point-host` a no-op for them.
+# Rebase it onto the ~/dotfiles flip symlink (behavior-neutral at first boot:
+# ~/dotfiles is dotfiles.baked). init-hm.sh early-exited above (the grafted
+# profile already has home-manager), so home.nix kept the bake-time rebase,
+# but re-assert it here so a future init-hm that does regenerate stays unpinned.
+ln -sfn "$home/dotfiles" "$home/.config/dfs-rhc"
+test "$(readlink "$home/.config/dfs-rhc")" = "$home/dotfiles" \
+  || fail "dfs-rhc not pointing at ~/dotfiles"
+hm_conf="$home/.config/home-manager/home.nix"
+if test -f "$hm_conf"; then
+  sed -i 's|/dotfiles\.baked/|/dotfiles/|g' "$hm_conf"
+  grep -qF '/dotfiles/nix/home' "$hm_conf" \
+    || fail "home.nix import not rebased to ~/dotfiles: $(grep -n 'home-nix-path' "$hm_conf" 2>/dev/null)"
+fi
+
 # --- 5. verify before committing the marker ---
 leftovers="$(find "$home" -xdev -type f -size -32M -exec grep -IlZ -- "$BAKED_HOME" {} + 2>/dev/null || true)"
 if test -n "$leftovers"; then

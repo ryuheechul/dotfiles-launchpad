@@ -163,6 +163,9 @@ COPY container-machine/template/home/README.md ${BAKED_HOME}/README.md
 RUN export HOME="${BAKED_HOME}" USER=root \
     && cd "${BAKED_HOME}/dotfiles" \
     && SKIP_INSTALL_DOOM=1 SKIP_INSTALL_VIM_PLUGINS=1 HINT_FOR_HM_NO_DCONF=1 ./nix/bin/init-hm.sh \
+    && sed -i 's|/dotfiles\.baked/|/dotfiles/|g' "${BAKED_HOME}/.config/home-manager/home.nix" \
+    && grep -qF '/dotfiles/nix/home' "${BAKED_HOME}/.config/home-manager/home.nix" \
+    && ! grep -q 'dotfiles\.baked' "${BAKED_HOME}/.config/home-manager/home.nix" \
     && ok=0 && i=1 \
     && while test "$i" -le 80; do \
          rm -rf /homeless-shelter; \

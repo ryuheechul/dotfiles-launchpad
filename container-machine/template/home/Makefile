@@ -16,11 +16,11 @@
 baked := dotfiles.baked
 host  := dotfiles.host
 
-# Repointing ~/dotfiles only flips the symlink. The source the tools actually
-# read (~/.config/dfs-rhc) is set separately by bootstrap/configuration.sh,
-# and nothing is re-applied until switch-home / switch-nix runs - so remind
-# the user the flip is partial until both are done.
-point_note = printf 'note: only ~/dotfiles moved.\nnote: ~/.config/dfs-rhc is unchanged (set via bootstrap/configuration.sh); run switch-home (or switch-nix) for the new source to fully take effect.\n'
+# Repointing ~/dotfiles moves everything that reads the source, because both
+# ~/.config/dfs-rhc and home.nix's import point through the ~/dotfiles symlink
+# (not at the resolved clone). So the flip is all-at-once - the only remaining
+# step is to re-apply, so remind the user to run switch-home / switch-nix.
+point_note = printf 'note: ~/dotfiles, ~/.config/dfs-rhc and home.nix now all point at the new source.\nnote: run switch-home (or switch-nix) to rebuild from it.\n'
 
 point-baked: ## point ~/dotfiles at the image's baked clone
 	@test -e $(baked) || { echo "no $(baked) in ~ (image missing its baked clone?)" >&2; exit 1; }

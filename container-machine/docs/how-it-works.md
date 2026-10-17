@@ -56,6 +56,21 @@ under a stable name, plus two symlinks around it:
 | `~/dotfiles` | symlink, defaults to `dotfiles.baked` (relative, so the graft's path rewrite leaves it alone) |
 | `~/dotfiles.host` | symlink to the host's own checkout at `/Users/<you>/dotfiles`; created at first boot because the image cannot know the host username |
 
+The two things that consume the dotfiles source are deliberately pinned to
+the `~/dotfiles` symlink, not to the resolved clone, so a `point-baked` /
+`point-host` flip moves all of them at once:
+
+- `~/.config/dfs-rhc` (the `my_dot_d` the zsh env sources and `switch-nix`
+  runs from) is relinked to `~/dotfiles` at first boot;
+- `home.nix`'s `home-nix-path` import is rebased from the resolved
+  `dotfiles.baked` onto `~/dotfiles/nix/home` (the upstream `init-hm.sh`
+  generates it with a `readlink -f`, which would otherwise freeze the import
+  onto the image's copy and make `point-host` a no-op for `switch-home`).
+
+Both are behavior-neutral at first boot (where `~/dotfiles` is
+`dotfiles.baked`), but after a flip `switch-home` / `switch-nix` genuinely
+rebuild from the newly-pointed source.
+
 The grafted `~/` Makefile (`make status` / `point-baked` / `point-host`)
 and the `~/` README explaining the table come from the shared
 [template/home/](../template/home/), identical for every flavor.
